@@ -38,6 +38,7 @@ import time
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
+RETRY_DELAY = 60
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
@@ -131,15 +132,30 @@ def run(
 
     # Dataloader
     bs = 1  # batch_size
-    if webcam:
-        view_img = check_imshow(warn=True)
-        dataset = LoadStreams(source, img_size=imgsz, stride=stride, auto=pt, vid_stride=vid_stride)
-        bs = len(dataset)
-    elif screenshot:
-        dataset = LoadScreenshots(source, img_size=imgsz, stride=stride, auto=pt)
-    else:
-        dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=pt, vid_stride=vid_stride)
-    vid_path, vid_writer = [None] * bs, [None] * bs
+    while True:
+        try:
+            if webcam:
+                view_img = check_imshow(warn=True)
+                dataset = LoadStreams(source, img_size=imgsz, stride=stride, auto=pt, vid_stride=vid_stride)
+                bs = len(dataset)
+            elif screenshot:
+                dataset = LoadScreenshots(source, img_size=imgsz, stride=stride, auto=pt)
+            else:
+                dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=pt, vid_stride=vid_stride)
+            vid_path, vid_writer = [None] * bs, [None] * bs
+
+            if dataset is None:
+                raise ValueError("Failed to load dataset")
+            break
+
+        except Exception as e:
+            LOGGER.error(f"Error loading stream: {e}")
+            if mqtt_server and mqtt_topic:
+                mqtt_client = MqttClient(mqtt_server, mqtt_port, mqtt_topic)
+                mqtt_client.publish("-1")
+
+            LOGGER.info(f"Retrying in {RETRY_DELAY} seconds...")
+            time.sleep(RETRY_DELAY)
 
     # Initialize MQTT client
     if mqtt_server != '' and mqtt_topic != '':
